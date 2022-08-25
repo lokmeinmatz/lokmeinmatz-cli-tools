@@ -61,11 +61,18 @@ function toReadableSize(bytes) {
 }
 
 
+function toPercentSaved(origV, newV) {
+    const delta = (newV - origV) / origV
+    return `${(-delta * 100).toFixed(1)}%`
+}
+
+const TMP_FILE_NAME = '_compress_tmp'
+
 async function compressFile(p) {
     const startTime = Date.now()
     const rPath = path.normalize(p)
 
-    const tempPath = path.join(path.dirname(rPath), 'tmp' + path.extname(rPath))
+    const tempPath = path.join(path.dirname(rPath), TMP_FILE_NAME + path.extname(rPath))
 
     
     const origStats = await exec(`ffprobe.exe "${rPath}" -print_format json -show_format -show_streams`).then(s => JSON.parse(s))
@@ -102,29 +109,65 @@ async function compressFile(p) {
 
     console.log(`
     File: ${rPath}
-    new size: ${toReadableSize(newStats.format.size)} (${((newStats.format.size / origStats.format.size) * 100).toFixed(1)}%)
+    new size: ${toReadableSize(newStats.format.size)} (saved ${toPercentSaved(origStats.format.size, newStats.format.size)})
     new bitrate: ${origStats.format.bit_rate}
     new codec: ${newVidStream.codec_name}
 
     time: ${toReadableDuration(Date.now() - startTime)}
     `)
+
+
+    return {
+        clipDurationS: origStats.format.duration,
+        originalSizeB: origStats.format.size,
+        compressedSizeB: newStats.format.size,
+        compressingTimeS: (Date.now() - startTime) / 1000
+    }
 }
 
+
+
 async function processSrc(src) {
+
+    
     /**
+     * Filter out tmp.MOV / tmp.MP4 usw
      * @type {string[]}
      */
-    const files = await globby(src, { absolute: true })
+    const files = (await globby(src, { absolute: true })).filter(fp => !path.basename(fp).startsWith(TMP_FILE_NAME))
     if (mode === 'check') {
         console.log(`
-======
-${files.join('\n')}
-==> ${files.length} for ${src}        
-`)
+        ======
+        ${files.join('\n')}
+        ==> ${files.length} for ${src}        
+        `)
     } else if (mode === 'compress') {
-        for (const file of files) {
-            await compressFile(file)
+        
+        const srcStatsAccumulated = {
+            clipDurationS: 0,
+            originalSizeB: 0,
+            compressedSizeB: 0,
+            compressingTimeS: 0
         }
+        for (const file of files) {
+            try {
+                await fs.access(file)
+                const fileStats = await compressFile(file)
+                if (!fileStats) continue;
+                Object.entries(fileStats).map(([key, val]) => srcStatsAccumulated[key] += val)
+            } catch (error) {
+                console.error(`Failed to process file ${file}`, error)
+            }
+        }
+
+        console.log(`
+=== processed src "${src}" ===
+total clip duration: ${toReadableDuration(srcStatsAccumulated.clipDurationS * 1000)}
+total size: ${toReadableSize(srcStatsAccumulated.originalSizeB)} -> ${toReadableSize(srcStatsAccumulated.compressedSizeB)}
+saved ${toPercentSaved(srcStatsAccumulated.originalSizeB, srcStatsAccumulated.compressedSizeB)}
+        `)
+
+        return srcStatsAccumulated
     }
 }
 
