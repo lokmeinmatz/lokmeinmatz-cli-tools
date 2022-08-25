@@ -1,0 +1,13 @@
+{
+  "name": "lokmeinmatz-cli-collection",
+  "type": "module",
+  "dependencies": {
+    "globby": "^13.1.2"
+  },
+  "scripts": {
+    "start": "node ./compress-vids.js"
+  },
+  "bin": {
+    "compress-vids": "./compress-vids.js"
+  }
+}
